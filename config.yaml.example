@@ -2,5 +2,10 @@ jira:
   url: https://yourcompany.atlassian.net
   default_board: "My Scrum Board"   # optional default board
 
-openai:
-  model: gpt-4o                     # optional, defaults to gpt-4o
+llm:
+  provider: openai                  # LLM provider (currently: openai)
+  model: gpt-4o                    # optional, defaults to gpt-4o
+
+vector_store:
+  enabled: true                     # set to false to disable memory
+  persist_dir: data/vectordb        # optional, defaults to data/vectordb

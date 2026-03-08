@@ -1,6 +1,7 @@
 .env
 config.yaml
 output/
+data/
 __pycache__/
 *.pyc
 .venv/

@@ -23,7 +23,7 @@ class TestLoadConfig:
         config_file = tmp_path / "config.yaml"
         config_file.write_text(yaml.dump({
             "jira": {"url": "https://jira.test", "default_board": "Board"},
-            "openai": {"model": "gpt-4o"},
+            "llm": {"provider": "openai", "model": "gpt-4o"},
         }))
         config = load_config(config_path=config_file)
         assert config["jira"]["url"] == "https://jira.test"
@@ -74,7 +74,7 @@ class TestMainCLI:
     @patch.dict(os.environ, {
         "JIRA_EMAIL": "test@test.com",
         "JIRA_API_TOKEN": "token",
-        "OPENAI_API_KEY": "sk-test",
+        "LLM_API_KEY": "sk-test",
     })
     def test_missing_board_exits(self, MockPath, mock_yaml, mock_dotenv):
         """No --board and no default_board should exit."""
@@ -111,9 +111,9 @@ class TestMainCLI:
     @patch("main.JiraClient")
     @patch("main.generate_summary", return_value="Test summary")
     @patch("main.generate_html", return_value="<html></html>")
-    def test_openai_key_optional(self, mock_html, mock_summary, MockClient,
-                                  mock_config, mock_dotenv, tmp_path, capsys):
-        """OpenAI key missing should warn but not exit."""
+    def test_llm_key_optional(self, mock_html, mock_summary, MockClient,
+                               mock_config, mock_dotenv, tmp_path, capsys):
+        """LLM key missing should warn but not exit."""
         mock_client = MagicMock()
         MockClient.return_value.__enter__ = MagicMock(return_value=mock_client)
         MockClient.return_value.__exit__ = MagicMock(return_value=False)
@@ -132,7 +132,7 @@ class TestMainCLI:
                 main()
 
         captured = capsys.readouterr()
-        assert "Warning: OPENAI_API_KEY not set" in captured.out
+        assert "No LLM API key set" in captured.out
 
 
 class TestInteractiveSprint:

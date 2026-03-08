@@ -12,9 +12,11 @@ from dotenv import load_dotenv
 
 from jira_client import JiraClient, JiraClientError
 from html_generator import _format_date_range
+from llm_client import create_llm_client
 from models import ReleaseNotes, SprintInfo
 from summarizer import generate_summary
 from html_generator import generate_html
+from vector_store import VectorStore
 
 
 def load_config(config_path: Path | None = None) -> dict:
@@ -94,6 +96,10 @@ def main():
         "--latest", action="store_true",
         help="Auto-select the latest active/closed sprint (non-interactive)"
     )
+    parser.add_argument(
+        "--no-memory", action="store_true",
+        help="Disable vector store memory (no historical context)"
+    )
     args = parser.parse_args()
 
     # Load secrets first, then config
@@ -108,18 +114,40 @@ def main():
         print("Copy .env.example to .env and add your Jira credentials.")
         sys.exit(1)
 
-    # OpenAI key is optional — fallback summary will be used if missing
-    openai_key = os.getenv("OPENAI_API_KEY")
-    if not openai_key:
-        print("Warning: OPENAI_API_KEY not set. Will use fallback summary (no LLM).")
-
     jira_conf = config["jira"]
     board_name = args.board or jira_conf.get("default_board")
     if not board_name:
         print("Error: No board specified. Use --board or set 'jira.default_board' in config.yaml.")
         sys.exit(1)
 
-    openai_model = config.get("openai", {}).get("model", "gpt-4o")
+    # LLM client setup — all provider logic is in llm_client.py
+    llm_conf = config.get("llm", config.get("openai", {}))
+    llm_provider = llm_conf.get("provider", "openai")
+    llm_model = llm_conf.get("model", "gpt-4o")
+    llm_api_key = os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY")
+
+    if not llm_api_key:
+        print("Warning: No LLM API key set. Will use fallback summary (no LLM).")
+
+    llm_client = create_llm_client(
+        provider=llm_provider, api_key=llm_api_key, model=llm_model
+    )
+
+    # Vector store config
+    vector_conf = config.get("vector_store", {})
+    persist_dir = vector_conf.get("persist_dir")
+    use_memory = not args.no_memory and vector_conf.get("enabled", True)
+
+    # Initialize vector store
+    store = None
+    if use_memory:
+        store_kwargs = {}
+        if persist_dir:
+            store_kwargs["persist_dir"] = persist_dir
+        store = VectorStore(**store_kwargs)
+        stored_count = store.count()
+        if stored_count > 0:
+            print(f"Vector store loaded ({stored_count} issues in memory).")
 
     # Connect to Jira
     with JiraClient(jira_conf["url"], jira_email, jira_token) as client:
@@ -163,9 +191,25 @@ def main():
         total = sum(len(v) for v in issues_by_type.values())
         print(f"Found {total} completed issues.")
 
-    # Generate LLM summary
+    # Store issues in vector database for future reference
+    historical_context = ""
+    if store and issues_by_type:
+        stored = store.store_sprint_issues(sprint, issues_by_type)
+        print(f"Stored {stored} issues in vector memory.")
+
+        # Retrieve historical context from past sprints
+        historical_context = store.get_related_context(
+            issues_by_type, current_sprint_id=sprint.id
+        )
+        if historical_context:
+            print("Retrieved historical context from past sprints.")
+
+    # Generate LLM summary (with chunking for large sprints)
     print("Generating executive summary...")
-    summary = generate_summary(issues_by_type, sprint.name, openai_model, openai_key)
+    summary = generate_summary(
+        issues_by_type, sprint.name, llm_client=llm_client,
+        historical_context=historical_context,
+    )
 
     # Build release notes
     release_notes = ReleaseNotes(
@@ -187,6 +231,8 @@ def main():
     output_path.write_text(html)
 
     print(f"\nRelease notes saved to: {output_path}")
+    if store:
+        print(f"Vector memory: {store.count()} total issues stored across sprints.")
 
 
 if __name__ == "__main__":

@@ -1,12 +1,18 @@
-"""Tests for summarizer.py — OpenAI GPT summarization."""
+"""Tests for summarizer.py — LLM-agnostic summarization engine."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
-import openai
 
 from summarizer import generate_summary, _fallback_summary, _pluralize
 from tests.conftest import make_issue
+
+
+def _mock_llm(response_text: str | None = "Summary text.") -> MagicMock:
+    """Create a mock LLMClient that returns the given text."""
+    mock = MagicMock()
+    mock.complete.return_value = response_text
+    return mock
 
 
 class TestPluralize:
@@ -65,120 +71,85 @@ class TestFallbackSummary:
 
 
 class TestGenerateSummary:
-    def test_no_api_key_returns_fallback(self):
+    def test_no_llm_client_returns_fallback(self):
         issues = {"Story": [make_issue()]}
-        result = generate_summary(issues, "Sprint 42", api_key=None)
+        result = generate_summary(issues, "Sprint 42", llm_client=None)
         assert "Sprint 42 completed" in result
 
-    def test_empty_api_key_returns_fallback(self):
+    def test_successful_llm_call(self):
+        llm = _mock_llm("  Great sprint with solid delivery.  ")
         issues = {"Story": [make_issue()]}
-        result = generate_summary(issues, "Sprint 42", api_key="")
+        result = generate_summary(issues, "Sprint 42", llm_client=llm)
+        assert result == "  Great sprint with solid delivery.  "
+        llm.complete.assert_called_once()
+
+    def test_llm_failure_returns_fallback(self):
+        llm = _mock_llm(None)
+        issues = {"Story": [make_issue()]}
+        result = generate_summary(issues, "Sprint 42", llm_client=llm)
         assert "Sprint 42 completed" in result
 
-    @patch("summarizer.OpenAI")
-    def test_successful_openai_call(self, MockOpenAI):
-        mock_client = MagicMock()
-        MockOpenAI.return_value = mock_client
-
-        mock_message = MagicMock()
-        mock_message.content = "  Great sprint with solid delivery.  "
-        mock_choice = MagicMock()
-        mock_choice.message = mock_message
-        mock_client.chat.completions.create.return_value = MagicMock(
-            choices=[mock_choice]
-        )
-
-        issues = {"Story": [make_issue()]}
-        result = generate_summary(issues, "Sprint 42", api_key="sk-test")
-        assert result == "Great sprint with solid delivery."
-
-    @patch("summarizer.OpenAI")
-    def test_openai_error_returns_fallback(self, MockOpenAI):
-        mock_client = MagicMock()
-        MockOpenAI.return_value = mock_client
-        mock_client.chat.completions.create.side_effect = openai.OpenAIError("fail")
-
-        issues = {"Story": [make_issue()]}
-        result = generate_summary(issues, "Sprint 42", api_key="sk-test")
-        assert "Sprint 42 completed" in result
-
-    @patch("summarizer.OpenAI")
-    def test_empty_choices_returns_fallback(self, MockOpenAI):
-        mock_client = MagicMock()
-        MockOpenAI.return_value = mock_client
-        mock_client.chat.completions.create.return_value = MagicMock(choices=[])
-
-        issues = {"Story": [make_issue()]}
-        result = generate_summary(issues, "Sprint 42", api_key="sk-test")
-        assert "Sprint 42 completed" in result
-
-    @patch("summarizer.OpenAI")
-    def test_null_content_returns_fallback(self, MockOpenAI):
-        mock_client = MagicMock()
-        MockOpenAI.return_value = mock_client
-        mock_choice = MagicMock()
-        mock_choice.message.content = None
-        mock_client.chat.completions.create.return_value = MagicMock(
-            choices=[mock_choice]
-        )
-
-        issues = {"Story": [make_issue()]}
-        result = generate_summary(issues, "Sprint 42", api_key="sk-test")
-        assert "Sprint 42 completed" in result
-
-    @patch("summarizer.OpenAI")
-    def test_model_parameter_passed(self, MockOpenAI):
-        mock_client = MagicMock()
-        MockOpenAI.return_value = mock_client
-        mock_message = MagicMock()
-        mock_message.content = "Summary"
-        mock_choice = MagicMock()
-        mock_choice.message = mock_message
-        mock_client.chat.completions.create.return_value = MagicMock(
-            choices=[mock_choice]
-        )
-
-        generate_summary({"Story": [make_issue()]}, "S1", model="gpt-3.5-turbo", api_key="sk-test")
-        call_kwargs = mock_client.chat.completions.create.call_args[1]
-        assert call_kwargs["model"] == "gpt-3.5-turbo"
-
-    @patch("summarizer.OpenAI")
-    def test_prompt_includes_issue_keys(self, MockOpenAI):
-        mock_client = MagicMock()
-        MockOpenAI.return_value = mock_client
-        mock_message = MagicMock()
-        mock_message.content = "Summary"
-        mock_choice = MagicMock()
-        mock_choice.message = mock_message
-        mock_client.chat.completions.create.return_value = MagicMock(
-            choices=[mock_choice]
-        )
-
+    def test_prompt_includes_issue_keys(self):
+        llm = _mock_llm("Summary")
         issues = {"Story": [make_issue(key="PROJ-99"), make_issue(key="PROJ-100")]}
-        generate_summary(issues, "Sprint 42", api_key="sk-test")
+        generate_summary(issues, "Sprint 42", llm_client=llm)
 
-        call_args = mock_client.chat.completions.create.call_args[1]
-        user_msg = call_args["messages"][1]["content"]
-        assert "PROJ-99" in user_msg
-        assert "PROJ-100" in user_msg
+        call_args = llm.complete.call_args
+        user_prompt = call_args[0][1]  # second positional arg
+        assert "PROJ-99" in user_prompt
+        assert "PROJ-100" in user_prompt
 
-    @patch("summarizer.OpenAI")
-    def test_prompt_uses_correct_pluralization(self, MockOpenAI):
+    def test_prompt_uses_correct_pluralization(self):
         """Bug #6: Prompt should say 'Stories' not 'Storys'."""
-        mock_client = MagicMock()
-        MockOpenAI.return_value = mock_client
-        mock_message = MagicMock()
-        mock_message.content = "Summary"
-        mock_choice = MagicMock()
-        mock_choice.message = mock_message
-        mock_client.chat.completions.create.return_value = MagicMock(
-            choices=[mock_choice]
+        llm = _mock_llm("Summary")
+        issues = {"Story": [make_issue()]}
+        generate_summary(issues, "Sprint 42", llm_client=llm)
+
+        call_args = llm.complete.call_args
+        user_prompt = call_args[0][1]
+        assert "Stories" in user_prompt
+        assert "Storys" not in user_prompt
+
+    def test_historical_context_included_in_prompt(self):
+        llm = _mock_llm("Summary with context")
+        issues = {"Story": [make_issue()]}
+        generate_summary(
+            issues, "Sprint 42", llm_client=llm,
+            historical_context="Past work on auth system."
         )
 
-        issues = {"Story": [make_issue()]}
-        generate_summary(issues, "Sprint 42", api_key="sk-test")
+        call_args = llm.complete.call_args
+        user_prompt = call_args[0][1]
+        assert "Past work on auth system." in user_prompt
 
-        call_args = mock_client.chat.completions.create.call_args[1]
-        user_msg = call_args["messages"][1]["content"]
-        assert "Stories" in user_msg
-        assert "Storys" not in user_msg
+    def test_chunked_summarization_for_large_sprints(self):
+        llm = _mock_llm("Chunk summary.")
+        # Create enough issues to trigger chunking with a tiny limit
+        issues = {
+            "Story": [
+                make_issue(key=f"P-{i}", summary=f"Feature {i} " * 20)
+                for i in range(50)
+            ]
+        }
+        result = generate_summary(
+            issues, "Sprint 42", llm_client=llm, chunk_token_limit=500
+        )
+        # LLM should be called multiple times (map + reduce)
+        assert llm.complete.call_count > 1
+        assert result == "Chunk summary."
+
+    def test_chunked_with_all_failures_returns_batch_fallbacks(self):
+        llm = _mock_llm(None)  # All calls fail
+        issues = {
+            "Story": [
+                make_issue(key=f"P-{i}", summary=f"Feature {i} " * 20)
+                for i in range(50)
+            ]
+        }
+        result = generate_summary(
+            issues, "Sprint 42", llm_client=llm, chunk_token_limit=500
+        )
+        # When all LLM calls fail, map phase produces per-chunk fallbacks,
+        # reduce also fails, so we get concatenated batch summaries
+        assert "Batch 1" in result
+        assert "story(s)" in result
