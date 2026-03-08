@@ -286,3 +286,43 @@ class TestContextManager:
     def test_url_trailing_slash_stripped(self):
         client = JiraClient("https://jira.test/", "a@b.com", "token")
         assert client.base_url == "https://jira.test"
+
+
+class TestAuthentication:
+    def test_basic_auth_sets_session_auth(self):
+        client = JiraClient("https://jira.test", email="a@b.com", api_token="token")
+        assert client.session.auth == ("a@b.com", "token")
+        assert "Authorization" not in client.session.headers
+
+    def test_pat_auth_sets_bearer_header(self):
+        client = JiraClient(
+            "https://jira.test", pat="my-pat-token", auth_method="pat"
+        )
+        assert client.session.headers["Authorization"] == "Bearer my-pat-token"
+        assert client.session.auth is None
+
+    def test_pat_auth_missing_token_raises(self):
+        with pytest.raises(JiraClientError, match="Personal Access Token"):
+            JiraClient("https://jira.test", auth_method="pat")
+
+    def test_basic_auth_missing_email_raises(self):
+        with pytest.raises(JiraClientError, match="JIRA_EMAIL and JIRA_API_TOKEN"):
+            JiraClient("https://jira.test", api_token="token", auth_method="basic")
+
+    def test_basic_auth_missing_token_raises(self):
+        with pytest.raises(JiraClientError, match="JIRA_EMAIL and JIRA_API_TOKEN"):
+            JiraClient("https://jira.test", email="a@b.com", auth_method="basic")
+
+    def test_pat_auth_request_succeeds(self):
+        client = JiraClient(
+            "https://jira.test", pat="my-pat-token", auth_method="pat"
+        )
+        mock_resp = _mock_response(200, {"key": "value"})
+        client.session.request = MagicMock(return_value=mock_resp)
+
+        result = client._request("GET", "https://jira.test/api")
+        assert result == {"key": "value"}
+
+    def test_default_auth_method_is_basic(self):
+        client = JiraClient("https://jira.test", email="a@b.com", api_token="tok")
+        assert client.session.auth == ("a@b.com", "tok")

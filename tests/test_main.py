@@ -100,6 +100,53 @@ class TestMainCLI:
             with pytest.raises(SystemExit):
                 main()
 
+    @patch.dict(os.environ, {}, clear=True)
+    @patch("main.load_dotenv")
+    @patch("main.load_config", return_value={
+        "jira": {"url": "https://jira.test", "auth_method": "pat"},
+    })
+    def test_missing_pat_token_exits(self, mock_config, mock_dotenv):
+        from main import main
+        with patch("sys.argv", ["main.py", "--board", "Board"]):
+            with pytest.raises(SystemExit):
+                main()
+
+    @patch.dict(os.environ, {"JIRA_PAT": "my-pat"}, clear=True)
+    @patch("main.load_dotenv")
+    @patch("main.load_config", return_value={
+        "jira": {"url": "https://jira.test", "default_board": "Board", "auth_method": "pat"},
+    })
+    @patch("main.JiraClient")
+    @patch("main.generate_summary", return_value="Test summary")
+    @patch("main.generate_html", return_value="<html></html>")
+    def test_pat_auth_works(self, mock_html, mock_summary, MockClient,
+                            mock_config, mock_dotenv, tmp_path, capsys):
+        mock_client = MagicMock()
+        MockClient.return_value.__enter__ = MagicMock(return_value=mock_client)
+        MockClient.return_value.__exit__ = MagicMock(return_value=False)
+        mock_client.find_board.return_value = {"id": 1, "name": "Board"}
+        sprint = make_sprint()
+        mock_client.find_sprint_by_name.return_value = sprint
+        mock_client.get_completed_issues.return_value = {}
+
+        with patch("sys.argv", ["main.py", "--sprint", "Sprint 42"]):
+            with patch("main.Path") as MockPath:
+                mock_output_dir = MagicMock()
+                MockPath.return_value = mock_output_dir
+                mock_output_path = MagicMock()
+                mock_output_dir.__truediv__ = MagicMock(return_value=mock_output_path)
+                from main import main
+                main()
+
+        # Verify JiraClient was called with pat auth
+        MockClient.assert_called_once_with(
+            url="https://jira.test",
+            email=None,
+            api_token=None,
+            pat="my-pat",
+            auth_method="pat",
+        )
+
     @patch.dict(os.environ, {
         "JIRA_EMAIL": "test@test.com",
         "JIRA_API_TOKEN": "token",

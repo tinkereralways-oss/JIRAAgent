@@ -13,11 +13,30 @@ class JiraClientError(Exception):
 
 
 class JiraClient:
-    def __init__(self, url: str, email: str, api_token: str):
+    def __init__(
+        self,
+        url: str,
+        email: str | None = None,
+        api_token: str | None = None,
+        pat: str | None = None,
+        auth_method: str = "basic",
+    ):
         self.base_url = url.rstrip("/")
         self.session = requests.Session()
-        self.session.auth = (email, api_token)
         self.session.headers.update({"Accept": "application/json"})
+
+        if auth_method == "pat":
+            if not pat:
+                raise JiraClientError(
+                    "Personal Access Token (JIRA_PAT) is required when auth_method is 'pat'."
+                )
+            self.session.headers["Authorization"] = f"Bearer {pat}"
+        else:
+            if not email or not api_token:
+                raise JiraClientError(
+                    "JIRA_EMAIL and JIRA_API_TOKEN are required when auth_method is 'basic'."
+                )
+            self.session.auth = (email, api_token)
 
     def close(self):
         self.session.close()

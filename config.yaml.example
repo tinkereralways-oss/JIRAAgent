@@ -1,6 +1,7 @@
 jira:
   url: https://yourcompany.atlassian.net
   default_board: "My Scrum Board"   # optional default board
+  auth_method: basic                # 'basic' (email + API token) or 'pat' (Personal Access Token)
 
 llm:
   provider: openai                  # LLM provider (currently: openai)

@@ -106,15 +106,25 @@ def main():
     load_dotenv()
     config = load_config()
 
-    # Jira credentials from .env
+    jira_conf = config["jira"]
+
+    # Jira authentication from .env and config
     jira_email = os.getenv("JIRA_EMAIL")
     jira_token = os.getenv("JIRA_API_TOKEN")
-    if not jira_email or not jira_token:
-        print("Error: JIRA_EMAIL and JIRA_API_TOKEN must be set in .env file.")
-        print("Copy .env.example to .env and add your Jira credentials.")
-        sys.exit(1)
+    jira_pat = os.getenv("JIRA_PAT")
+    auth_method = jira_conf.get("auth_method", "basic")
 
-    jira_conf = config["jira"]
+    if auth_method == "pat":
+        if not jira_pat:
+            print("Error: JIRA_PAT must be set in .env file when auth_method is 'pat'.")
+            print("Generate a Personal Access Token in your Jira profile settings.")
+            sys.exit(1)
+    else:
+        if not jira_email or not jira_token:
+            print("Error: JIRA_EMAIL and JIRA_API_TOKEN must be set in .env file.")
+            print("Copy .env.example to .env and add your Jira credentials.")
+            sys.exit(1)
+
     board_name = args.board or jira_conf.get("default_board")
     if not board_name:
         print("Error: No board specified. Use --board or set 'jira.default_board' in config.yaml.")
@@ -150,7 +160,13 @@ def main():
             print(f"Vector store loaded ({stored_count} issues in memory).")
 
     # Connect to Jira
-    with JiraClient(jira_conf["url"], jira_email, jira_token) as client:
+    with JiraClient(
+        url=jira_conf["url"],
+        email=jira_email,
+        api_token=jira_token,
+        pat=jira_pat,
+        auth_method=auth_method,
+    ) as client:
         print(f"Looking up board: {board_name}...")
         try:
             board = client.find_board(board_name)
